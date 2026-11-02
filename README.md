@@ -1,1 +1,1 @@
-"study gud"
+study gud
