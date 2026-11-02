@@ -1,0 +1,10 @@
+{
+  "name": "Smart Study",
+  "description": "Master school in a short time",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
