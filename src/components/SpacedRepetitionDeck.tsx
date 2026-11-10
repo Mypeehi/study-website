@@ -16,6 +16,7 @@ import {
 import { Flashcard } from '../types';
 import { playCorrectSound, playIncorrectSound, playStreakFlameSound } from '../utils/audio';
 import { AILoadingBar } from './AILoadingBar';
+import { generateLocalStudySession } from '../utils/localStudySessionGenerator';
 
 interface SpacedRepetitionDeckProps {
   cards: Flashcard[];
@@ -43,19 +44,36 @@ export const SpacedRepetitionDeck: React.FC<SpacedRepetitionDeckProps> = ({
     const topic = genTopic.trim() || 'Core Mechanism Mastery';
     setIsGenerating(true);
     try {
-      const res = await fetch('/api/study-session/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      let flashcards: any[] = [];
+      try {
+        const res = await fetch('/api/study-session/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            subject: topic,
+            topics: [topic],
+            gradeLevel: 'High School / University',
+            durationMinutes: 30,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.flashcards) flashcards = data.flashcards;
+        }
+      } catch {
+        // Zero connection fallback
+      }
+
+      if (flashcards.length === 0) {
+        const localData = generateLocalStudySession({
           subject: topic,
           topics: [topic],
-          gradeLevel: 'High School / University',
-          durationMinutes: 30,
-        }),
-      });
-      const data = await res.json();
-      if (data.flashcards && data.flashcards.length > 0) {
-        data.flashcards.forEach((fc: any, i: number) => {
+        });
+        flashcards = localData.flashcards;
+      }
+
+      if (flashcards && flashcards.length > 0) {
+        flashcards.forEach((fc: any, i: number) => {
           onUpdateCard({
             id: `gen-fc-${Date.now()}-${i}`,
             topic,

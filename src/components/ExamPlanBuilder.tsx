@@ -47,6 +47,7 @@ import { TypewriterText } from './TypewriterText';
 import { RoadmapLevelsBar } from './RoadmapLevelsBar';
 import { RoadmapLevelsButton } from './RoadmapLevelsButton';
 import { HandDrawnSmileyIcon } from './HandDrawnSmileyIcon';
+import { generateLocalExamPlan } from '../utils/localPlanGenerator';
 
 interface ExamPlanBuilderProps {
   currentPlan?: ExamPlan | null;
@@ -619,21 +620,19 @@ export const ExamPlanBuilder: React.FC<ExamPlanBuilderProps> = ({
     };
 
     try {
-      const res = await fetch('/api/exam-plan/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profile }),
-      });
+      // Step simulation for realistic, smooth analytical feedback (800ms)
+      await new Promise(resolve => setTimeout(resolve, 800));
 
-      const plan: ExamPlan = await res.json();
+      // Generate active study plan 100% locally with zero connection required
+      const plan: ExamPlan = generateLocalExamPlan(profile);
+
       clearInterval(stepInterval);
       playStreakFlameSound();
       onPlanGenerated(plan);
       setIsEditing(false);
     } catch (err) {
-      console.error(err);
+      console.error('Error generating local active study plan:', err);
       clearInterval(stepInterval);
-      alert('Failed to generate exam plan. Please check your connection.');
     } finally {
       setIsGenerating(false);
     }

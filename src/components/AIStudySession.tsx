@@ -51,6 +51,7 @@ import { TypewriterText } from './TypewriterText';
 import { DeepWorkPomodoroTimer } from './DeepWorkPomodoroTimer';
 import { getDetailedAnswerExplanation } from '../utils/answerExplanation';
 import { WrongAnswerBreakdownCard } from './WrongAnswerBreakdownCard';
+import { generateLocalStudySession } from '../utils/localStudySessionGenerator';
 
 interface AIStudySessionProps {
   examProfile?: ExamProfile | null;
@@ -283,21 +284,46 @@ export const AIStudySession: React.FC<AIStudySessionProps> = ({
     setIsDeepWork(customDeepWork);
 
     try {
-      const res = await fetch('/api/study-session/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      let data: StudySessionData;
+      try {
+        const res = await fetch('/api/study-session/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            subject,
+            topics,
+            gradeLevel,
+            durationMinutes: durationMins,
+            subjectCategory: customSubject,
+            deepWorkMode: customDeepWork,
+            questionTypes: examProfile?.questionTypes,
+          }),
+        });
+
+        if (res.ok) {
+          data = await res.json();
+        } else {
+          data = generateLocalStudySession({
+            subject,
+            topics,
+            gradeLevel,
+            durationMinutes: durationMins,
+            subjectCategory: customSubject,
+            deepWorkMode: customDeepWork,
+          });
+        }
+      } catch {
+        // Zero connection fallback - generates 100% locally
+        data = generateLocalStudySession({
           subject,
           topics,
           gradeLevel,
           durationMinutes: durationMins,
           subjectCategory: customSubject,
           deepWorkMode: customDeepWork,
-          questionTypes: examProfile?.questionTypes,
-        }),
-      });
+        });
+      }
 
-      const data: StudySessionData = await res.json();
       setSessionData(data);
       setIsRunning(true);
       playStreakFlameSound();
@@ -309,9 +335,19 @@ export const AIStudySession: React.FC<AIStudySessionProps> = ({
       else if (targetPhase === 'Break') triggerBreak();
       else setActiveStep('pretest');
     } catch (err) {
-      console.error(err);
-      alert('Could not start study session. Please check your connection.');
-      setIsConfiguring(true);
+      console.error('Session start error:', err);
+      // Even if outer fails, provide fallback session
+      const fallbackData = generateLocalStudySession({
+        subject,
+        topics,
+        gradeLevel,
+        durationMinutes: durationMins,
+        subjectCategory: customSubject,
+        deepWorkMode: customDeepWork,
+      });
+      setSessionData(fallbackData);
+      setIsRunning(true);
+      setActiveStep('pretest');
     } finally {
       setIsLoadingSession(false);
     }
