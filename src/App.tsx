@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { LeftSidebar } from './components/LeftSidebar';
 import { RoadmapLevelsButton } from './components/RoadmapLevelsButton';
-import { Menu, Flame } from 'lucide-react';
+import { Menu, Flame, FileDown } from 'lucide-react';
 import { DailyStudyGoalTracker } from './components/DailyStudyGoalTracker';
 import { playStreakFlameSound } from './utils/audio';
 import { ActiveStudySimulator } from './components/ActiveStudySimulator';
@@ -17,6 +17,7 @@ import { MistakesVaultPage } from './components/MistakesVaultPage';
 import { LeaderboardPage } from './components/LeaderboardPage';
 import { Achievements } from './components/Achievements';
 import { QuestionCreatorStudio } from './components/QuestionCreatorStudio';
+import { GitHubIntegrationPage } from './components/GitHubIntegrationPage';
 import { AchievementToastOverlay, AchievementToastItem } from './components/AchievementToastOverlay';
 import { evaluateAchievements, claimAchievementReward } from './utils/achievements';
 import { INITIAL_LECTURES, INITIAL_FLASHCARDS } from './data/lectures';
@@ -124,7 +125,7 @@ export default function App() {
     setStudyState(updated);
   };
 
-  const [activeTab, setActiveTab] = useState<'plan' | 'session' | 'lectures' | 'quiz' | 'examiner' | 'cards' | 'streak' | 'level-drill' | 'mistakes' | 'leaderboard' | 'achievements' | 'creator'>('plan');
+  const [activeTab, setActiveTab] = useState<'plan' | 'session' | 'lectures' | 'quiz' | 'examiner' | 'cards' | 'streak' | 'level-drill' | 'mistakes' | 'leaderboard' | 'achievements' | 'creator' | 'github'>('plan');
   const [isProfileCustomizerOpen, setIsProfileCustomizerOpen] = useState(false);
 
   const handleUpdateProfile = (profile: UserProfileCustomization) => {
@@ -455,7 +456,18 @@ export default function App() {
           </div>
 
           {/* Right Controls */}
-          <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            {/* Download 1-File Website */}
+            <a
+              href="/api/download-single-file"
+              download="smart-study-single-file.html"
+              title="Download entire website as 1 self-contained HTML file (all-in-one)"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-slate-800 hover:border-cyan-500/40 text-slate-300 hover:text-cyan-300 text-xs font-semibold transition-all cursor-pointer shadow-sm group"
+            >
+              <FileDown className="w-3.5 h-3.5 text-cyan-400 group-hover:translate-y-0.5 transition-transform" />
+              <span className="hidden sm:inline">1-File Website</span>
+            </a>
+
             {/* Streak Indicator */}
             <div
               onClick={() => {
@@ -491,7 +503,7 @@ export default function App() {
 
         {/* Main Tab Content */}
         <main className="flex-1 pb-16 px-2 sm:px-4 md:px-6 pt-4 space-y-6">
-          {/* Daily Motivational Quote - Angry Scholar Academic Grit */}
+          {/* Official Daily Motivational Quote */}
           <div className="max-w-6xl mx-auto">
             <DailyMotivationalQuote activeTab={activeTab} />
           </div>
@@ -697,6 +709,20 @@ export default function App() {
               variant="standalone-page"
             />
           </div>
+        )}
+
+        {activeTab === 'github' && (
+          <GitHubIntegrationPage
+            studyState={studyState}
+            onUpdateStudyState={setStudyState}
+            onAddGeneratedQuestions={(newQs) => {
+              setActiveQuizQuestions(prev => [...newQs, ...prev]);
+              setQuizTopicTitle('GitHub Ingested Practice Challenge');
+            }}
+            onNavigateToQuiz={() => {
+              setActiveTab('quiz');
+            }}
+          />
         )}
       </main>
 

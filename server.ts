@@ -1,4 +1,6 @@
-import express, { Request, Response } from 'express';
+import express from 'express';
+import type { Request, Response } from 'express';
+import fs from 'fs';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -10,7 +12,26 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+
+// Determine app listening port: In AI Studio, Nginx binds to 8080 and proxies to 3000.
+// The Node/Express server must bind to port 3000 (never 8080).
+function resolvePort(): number {
+  const portArgIndex = process.argv.indexOf('--port');
+  if (portArgIndex !== -1 && process.argv[portArgIndex + 1]) {
+    const val = parseInt(process.argv[portArgIndex + 1], 10);
+    if (!isNaN(val) && val > 0 && val !== 8080) return val;
+  }
+  if (process.env.DEFAULT_APP_PORT) {
+    const val = parseInt(process.env.DEFAULT_APP_PORT, 10);
+    if (!isNaN(val) && val > 0 && val !== 8080) return val;
+  }
+  if (process.env.PORT && process.env.PORT !== '8080') {
+    const val = parseInt(process.env.PORT, 10);
+    if (!isNaN(val) && val > 0) return val;
+  }
+  return 3000;
+}
+const PORT = resolvePort();
 
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
@@ -995,6 +1016,659 @@ app.post('/api/questions/synthesize-voice', async (req: Request, res: Response) 
   } catch (err: any) {
     console.error('Error in /api/questions/synthesize-voice:', err);
     return res.status(500).json({ error: err?.message || 'Voice synthesis failed' });
+  }
+});
+
+
+// ==========================================
+// 3C. GITHUB INTEGRATION & OAUTH ENDPOINTS
+// ==========================================
+function getAppBaseUrl(req: Request): string {
+  if (process.env.APP_URL && process.env.APP_URL !== 'MY_APP_URL') {
+    return process.env.APP_URL.replace(/\/$/, '');
+  }
+  const host = req.get('host') || '';
+  if (host.includes('run.app')) {
+    return `https://${host}`;
+  }
+  const protocol = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
+  return `${protocol}://${host || 'localhost:3000'}`;
+}
+
+// 1. Get GitHub OAuth Authorize URL
+app.get('/api/auth/github/url', (req: Request, res: Response) => {
+  const baseUrl = getAppBaseUrl(req);
+  const redirectUri = `${baseUrl}/auth/github/callback`;
+  const clientId = process.env.GITHUB_CLIENT_ID || '';
+  const devCallback = 'https://ais-dev-fyu2pvxhkjuql6t5rypdhe-479650556186.us-west2.run.app/auth/github/callback';
+  const sharedCallback = 'https://ais-pre-fyu2pvxhkjuql6t5rypdhe-479650556186.us-west2.run.app/auth/github/callback';
+
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    scope: 'read:user,repo,gist',
+    state: Math.random().toString(36).substring(2),
+  });
+
+  const authUrl = `https://github.com/login/oauth/authorize?${params.toString()}`;
+
+  return res.json({
+    url: authUrl,
+    isConfigured: Boolean(clientId && process.env.GITHUB_CLIENT_SECRET),
+    redirectUri,
+    devCallback,
+    sharedCallback,
+  });
+});
+
+// 2. Handle GitHub OAuth Callback (both with and without trailing slash)
+app.get(['/auth/github/callback', '/auth/github/callback/'], async (req: Request, res: Response) => {
+  const { code, error, error_description } = req.query;
+  const baseUrl = getAppBaseUrl(req);
+  const redirectUri = `${baseUrl}/auth/github/callback`;
+
+  if (error || !code) {
+    const errorMsg = String(error_description || error || 'Authorization was cancelled or failed.');
+    return res.send(`
+      <!DOCTYPE html>
+      <html>
+        <head><title>GitHub Authentication Failed</title></head>
+        <body style="background:#090d16;color:#f8fafc;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+          <div style="background:#1e293b;padding:32px;border-radius:16px;text-align:center;max-width:420px;border:1px solid #ef4444;">
+            <h3 style="color:#ef4444;margin:0 0 12px;">GitHub Authentication Error</h3>
+            <p style="color:#cbd5e1;font-size:14px;line-height:1.5;">${errorMsg}</p>
+            <script>
+              if (window.opener) {
+                window.opener.postMessage({ type: 'GITHUB_AUTH_ERROR', error: ${JSON.stringify(errorMsg)} }, '*');
+                setTimeout(() => window.close(), 1500);
+              }
+            </script>
+          </div>
+        </body>
+      </html>
+    `);
+  }
+
+  try {
+    // Exchange authorization code for access token
+    const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'User-Agent': 'SmartStudy-App/1.0',
+      },
+      body: JSON.stringify({
+        client_id: process.env.GITHUB_CLIENT_ID,
+        client_secret: process.env.GITHUB_CLIENT_SECRET,
+        code: String(code),
+        redirect_uri: redirectUri,
+      }),
+    });
+
+    const tokenData: any = await tokenRes.json();
+
+    if (tokenData.error || !tokenData.access_token) {
+      const errMsg = tokenData.error_description || tokenData.error || 'Failed to obtain access token from GitHub.';
+      return res.send(`
+        <!DOCTYPE html>
+        <html>
+          <head><title>GitHub Token Error</title></head>
+          <body style="background:#090d16;color:#f8fafc;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+            <div style="background:#1e293b;padding:32px;border-radius:16px;text-align:center;max-width:420px;border:1px solid #ef4444;">
+              <h3 style="color:#ef4444;margin:0 0 12px;">Token Exchange Failed</h3>
+              <p style="color:#cbd5e1;font-size:14px;line-height:1.5;">${errMsg}</p>
+              <script>
+                if (window.opener) {
+                  window.opener.postMessage({ type: 'GITHUB_AUTH_ERROR', error: ${JSON.stringify(errMsg)} }, '*');
+                  setTimeout(() => window.close(), 1500);
+                }
+              </script>
+            </div>
+          </body>
+        </html>
+      `);
+    }
+
+    // Fetch authenticated user profile
+    const userRes = await fetch('https://api.github.com/user', {
+      headers: {
+        Authorization: `Bearer ${tokenData.access_token}`,
+        'User-Agent': 'SmartStudy-App/1.0',
+        Accept: 'application/vnd.github.v3+json',
+      },
+    });
+
+    const userData: any = await userRes.json();
+
+    return res.send(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>GitHub Connected</title>
+          <style>
+            body {
+              background: #090d16;
+              color: #f8fafc;
+              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              height: 100vh;
+              margin: 0;
+            }
+            .card {
+              background: #0f172a;
+              border: 1px solid rgba(56, 189, 248, 0.4);
+              border-radius: 20px;
+              padding: 32px;
+              text-align: center;
+              max-width: 380px;
+              box-shadow: 0 20px 40px rgba(0,0,0,0.6);
+            }
+            .avatar {
+              width: 72px;
+              height: 72px;
+              border-radius: 50%;
+              border: 3px solid #38bdf8;
+              margin-bottom: 16px;
+            }
+            h2 { margin: 0 0 8px; color: #38bdf8; font-size: 20px; }
+            p { color: #94a3b8; font-size: 13px; margin: 0 0 16px; }
+            .badge {
+              display: inline-block;
+              padding: 4px 12px;
+              background: rgba(16, 185, 129, 0.2);
+              border: 1px solid #10b981;
+              color: #34d399;
+              font-size: 12px;
+              font-weight: bold;
+              border-radius: 12px;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            ${userData.avatar_url ? `<img src="${userData.avatar_url}" class="avatar" alt="Avatar"/>` : ''}
+            <h2>GitHub Connected!</h2>
+            <p>Welcome back, <strong>@${userData.login || 'Scholar'}</strong></p>
+            <div class="badge">Session Linked Successfully</div>
+            <p style="margin-top:16px; font-size: 11px; color:#64748b;">Closing window and returning to Smart Study...</p>
+          </div>
+          <script>
+            const payload = {
+              type: 'GITHUB_AUTH_SUCCESS',
+              token: ${JSON.stringify(tokenData.access_token)},
+              user: ${JSON.stringify(userData)},
+              timestamp: Date.now()
+            };
+            if (window.opener) {
+              window.opener.postMessage(payload, '*');
+              setTimeout(() => {
+                window.close();
+              }, 500);
+            } else {
+              window.location.href = '/';
+            }
+          </script>
+        </body>
+      </html>
+    `);
+  } catch (err: any) {
+    console.error('Error during GitHub OAuth callback:', err);
+    return res.status(500).send(`Authentication error: ${err?.message || 'Unknown error'}`);
+  }
+});
+
+// 3. Verify GitHub Token (OAuth token or Personal Access Token) & Fetch User Profile + Repos
+app.post('/api/github/verify-token', async (req: Request, res: Response) => {
+  const { token } = req.body;
+  if (!token) {
+    return res.status(400).json({ error: 'GitHub token is required.' });
+  }
+
+  try {
+    const userRes = await fetch('https://api.github.com/user', {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'User-Agent': 'SmartStudy-App/1.0',
+        Accept: 'application/vnd.github.v3+json',
+      },
+    });
+
+    if (!userRes.ok) {
+      const errData: any = await userRes.json();
+      return res.status(userRes.status).json({
+        error: errData.message || 'Invalid GitHub token. Please verify token permissions.',
+      });
+    }
+
+    const user: any = await userRes.json();
+
+    // Fetch user's recent repositories
+    let repos: any[] = [];
+    try {
+      const reposRes = await fetch('https://api.github.com/user/repos?sort=updated&per_page=12', {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'User-Agent': 'SmartStudy-App/1.0',
+          Accept: 'application/vnd.github.v3+json',
+        },
+      });
+      if (reposRes.ok) {
+        repos = await reposRes.json();
+      }
+    } catch (e) {
+      // Repos fetch optional
+    }
+
+    return res.json({
+      success: true,
+      user: {
+        id: user.id,
+        login: user.login,
+        name: user.name,
+        avatar_url: user.avatar_url,
+        html_url: user.html_url,
+        bio: user.bio,
+        public_repos: user.public_repos,
+        total_private_repos: user.total_private_repos || 0,
+        company: user.company,
+        location: user.location,
+      },
+      repos: repos.map((r: any) => ({
+        id: r.id,
+        name: r.name,
+        full_name: r.full_name,
+        private: r.private,
+        description: r.description,
+        html_url: r.html_url,
+        default_branch: r.default_branch,
+        updated_at: r.updated_at,
+      })),
+    });
+  } catch (err: any) {
+    console.error('Error verifying GitHub token:', err);
+    return res.status(500).json({ error: err?.message || 'Failed to verify GitHub token' });
+  }
+});
+
+// 4. Import Content from GitHub (Repository, Markdown Notes, Code, or Syllabus)
+app.post('/api/github/import-content', async (req: Request, res: Response) => {
+  const { repoUrl, filePath = '', token, targetMode = 'questions' } = req.body;
+
+  if (!repoUrl) {
+    return res.status(400).json({ error: 'GitHub repository or file URL is required.' });
+  }
+
+  try {
+    // Parse repo URL: supports "owner/repo", "https://github.com/owner/repo", or "https://github.com/owner/repo/blob/branch/path/to/file.md"
+    let cleanUrl = repoUrl.trim().replace(/\/$/, '');
+    let owner = '';
+    let repo = '';
+    let extractedPath = filePath;
+    let branch = 'main';
+
+    if (cleanUrl.includes('github.com/')) {
+      const parts = cleanUrl.replace('https://github.com/', '').replace('http://github.com/', '').split('/');
+      owner = parts[0];
+      repo = parts[1];
+      if (parts[2] === 'blob' && parts.length > 4) {
+        branch = parts[3];
+        extractedPath = parts.slice(4).join('/');
+      }
+    } else if (cleanUrl.includes('/')) {
+      const parts = cleanUrl.split('/');
+      owner = parts[0];
+      repo = parts[1];
+    } else {
+      return res.status(400).json({ error: 'Invalid GitHub URL format. Use owner/repo or full github.com link.' });
+    }
+
+    const headers: Record<string, string> = {
+      'User-Agent': 'SmartStudy-App/1.0',
+      Accept: 'application/vnd.github.v3+json',
+    };
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+
+    let fileContent = '';
+    let resolvedFileName = extractedPath || 'README.md';
+
+    // If specific file path requested
+    if (extractedPath) {
+      const branchParam = cleanUrl.includes('/blob/') ? `?ref=${branch}` : '';
+      const fileApiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${extractedPath}${branchParam}`;
+      const fileRes = await fetch(fileApiUrl, { headers });
+      if (!fileRes.ok) {
+        // Try raw usercontent fallback with branch then master
+        let rawRes = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${extractedPath}`, { headers });
+        if (!rawRes.ok) {
+          rawRes = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/master/${extractedPath}`, { headers });
+        }
+        if (!rawRes.ok) {
+          throw new Error(`Could not locate file "${extractedPath}" in repository ${owner}/${repo}`);
+        }
+        fileContent = await rawRes.text();
+      } else {
+        const fileData: any = await fileRes.json();
+        if (fileData.content && fileData.encoding === 'base64') {
+          fileContent = Buffer.from(fileData.content, 'base64').toString('utf-8');
+        } else if (fileData.download_url) {
+          const dlRes = await fetch(fileData.download_url, { headers });
+          fileContent = await dlRes.text();
+        }
+      }
+    } else {
+      // Default: fetch repository README
+      const readmeRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/readme`, { headers });
+      if (readmeRes.ok) {
+        const readmeData: any = await readmeRes.json();
+        if (readmeData.content && readmeData.encoding === 'base64') {
+          fileContent = Buffer.from(readmeData.content, 'base64').toString('utf-8');
+          resolvedFileName = readmeData.name || 'README.md';
+        }
+      } else {
+        // Fallback: list contents of repository
+        const contentsRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents`, { headers });
+        if (contentsRes.ok) {
+          const items: any = await contentsRes.json();
+          const mdItem = items.find((it: any) => it.name.endsWith('.md') || it.name.endsWith('.txt'));
+          if (mdItem && mdItem.download_url) {
+            const fileRes = await fetch(mdItem.download_url, { headers });
+            fileContent = await fileRes.text();
+            resolvedFileName = mdItem.name;
+          } else {
+            fileContent = `Repository ${owner}/${repo} structure:\n` + items.map((it: any) => `- ${it.path} (${it.type})`).join('\n');
+            resolvedFileName = 'Repository Outline';
+          }
+        } else {
+          throw new Error(`Unable to fetch contents from ${owner}/${repo}. Check if repo is public or provide an authenticated token.`);
+        }
+      }
+    }
+
+    // Limit text for Gemini processing
+    const truncatedText = fileContent.slice(0, 15000);
+
+    // If targetMode is 'questions', run Gemini to transform GitHub text into high-yield exam practice questions
+    let generatedQuestions: any[] = [];
+    if (targetMode === 'questions') {
+      const qPrompt = `You are The Angry Examiner. You have ingested this technical document/code/notes from GitHub repository "${owner}/${repo}" (${resolvedFileName}):
+---
+${truncatedText}
+---
+Generate 3 challenging, high-yield multiple-choice exam questions testing the core mechanics, theorems, architectures, or principles described in this GitHub material.
+For EACH question:
+- 4 plausible options
+- 1 objectively correct option
+- Rigorous explanation of the proof
+- Specific examiner trap note
+- distractorExplanations: For each option index (0 to 3), provide 1-2 sentences explaining why that choice is flawed (or why it is correct for the correctIndex).
+
+Respond in JSON adhering to this schema:
+{
+  "questions": [
+    {
+      "topic": "${repo} - ${resolvedFileName}",
+      "question": "The question stem...",
+      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "correctIndex": 0,
+      "angryExplanation": "Why correctIndex is true...",
+      "examinerTrapNotes": "Specific trap to avoid...",
+      "distractorExplanations": ["Why A", "Why B", "Why C", "Why D"]
+    }
+  ]
+}`;
+
+      try {
+        const geminiRes = await callGeminiWithFallback({
+          contents: qPrompt,
+          config: {
+            responseMimeType: 'application/json',
+          },
+        });
+        const parsed = JSON.parse(geminiRes.text?.trim() || '{}');
+        if (Array.isArray(parsed.questions)) {
+          generatedQuestions = parsed.questions.map((q: any, i: number) => ({
+            id: `github-imported-${Date.now()}-${i}`,
+            ...q,
+            topic: q.topic || `${owner}/${repo}`,
+          }));
+        }
+      } catch (genErr) {
+        console.warn('Gemini question generation from GitHub failed:', genErr);
+      }
+    }
+
+    return res.json({
+      success: true,
+      repo: `${owner}/${repo}`,
+      fileName: resolvedFileName,
+      contentSnippet: fileContent.slice(0, 2000),
+      contentLength: fileContent.length,
+      generatedQuestions,
+    });
+  } catch (err: any) {
+    console.error('Error importing from GitHub:', err);
+    return res.status(500).json({ error: err?.message || 'Failed to import content from GitHub' });
+  }
+});
+
+// 5. Export / Sync Study Vault to GitHub Gist
+app.post('/api/github/export-gist', async (req: Request, res: Response) => {
+  const { token, studyPlan, mistakes, flashcards, studyState, isPublic = false, description } = req.body;
+
+  if (!token) {
+    return res.status(401).json({ error: 'GitHub token required to export Gist.' });
+  }
+
+  try {
+    const files: Record<string, { content: string }> = {};
+
+    // 1. Study Plan Markdown
+    if (studyPlan) {
+      let planMd = `# 🎓 The Angry Examiner: Active Study War Plan\n\n`;
+      planMd += `**Subject:** ${studyPlan.profile?.subject || 'Comprehensive Study'}\n`;
+      planMd += `**Exam Target Date:** ${studyPlan.profile?.examDate || 'Upcoming'}\n`;
+      planMd += `**Daily Target:** ${studyPlan.dailyStudyTargetMinutes || 60} minutes/day\n\n`;
+      planMd += `## Examiner Roast & Diagnostic\n> ${studyPlan.examinerRoastSummary || 'Active recall beats passive reading.'}\n\n`;
+      planMd += `## High-Yield Milestones\n`;
+      (studyPlan.milestones || []).forEach((m: any, i: number) => {
+        planMd += `### Milestone ${i + 1}: ${m.title} (${m.dayRange})\n`;
+        planMd += `**Focus:** ${m.focus}\n`;
+        (m.actionItems || []).forEach((item: string) => {
+          planMd += `- [ ] ${item}\n`;
+        });
+        planMd += `\n`;
+      });
+      files['study-plan.md'] = { content: planMd };
+    }
+
+    // 2. Mistakes Vault Markdown
+    if (Array.isArray(mistakes) && mistakes.length > 0) {
+      let mistakesMd = `# ⚠️ Mistakes Vault: Cognitive Gap Analysis\n\n`;
+      mistakesMd += `*Generated by Smart Study on ${new Date().toLocaleDateString()}*\n\n`;
+      mistakes.forEach((m: any, i: number) => {
+        mistakesMd += `### Error ${i + 1}: ${m.topic}\n`;
+        mistakesMd += `**Question:** ${m.question}\n\n`;
+        mistakesMd += `❌ **Your Choice:** ${m.selectedAnswer}\n`;
+        if (m.whyPickedWrong) {
+          mistakesMd += `*Why chosen option was wrong:* ${m.whyPickedWrong}\n`;
+        }
+        mistakesMd += `\n✅ **Correct Answer:** ${m.correctAnswer}\n`;
+        mistakesMd += `*Textbook Proof:* ${m.examinerExplanation}\n\n`;
+        if (m.trapNote) {
+          mistakesMd += `⚠️ **Trap Warning:** ${m.trapNote}\n`;
+        }
+        mistakesMd += `\n---\n\n`;
+      });
+      files['mistakes-vault.md'] = { content: mistakesMd };
+    }
+
+    // 3. Spaced Repetition Flashcards Markdown
+    if (Array.isArray(flashcards) && flashcards.length > 0) {
+      let cardsMd = `# 🗂️ Active Spaced Repetition Flashcards\n\n`;
+      flashcards.forEach((c: any, i: number) => {
+        cardsMd += `### Card ${i + 1}: ${c.topic} (Box ${c.box || 1})\n`;
+        cardsMd += `**Front (Question / Challenge):**\n${c.front}\n\n`;
+        cardsMd += `**Back (Mechanism / Solution):**\n${c.back}\n\n`;
+        if (c.trap) {
+          cardsMd += `*Common Distractor Trap:* ${c.trap}\n`;
+        }
+        cardsMd += `\n---\n\n`;
+      });
+      files['flashcards.md'] = { content: cardsMd };
+    }
+
+    // 4. Complete Raw JSON Backup
+    if (studyState) {
+      files['smart-study-backup.json'] = {
+        content: JSON.stringify(studyState, null, 2),
+      };
+    }
+
+    if (Object.keys(files).length === 0) {
+      files['study-notes.md'] = {
+        content: `# Smart Study Notes\n\nExported on ${new Date().toISOString()}`,
+      };
+    }
+
+    const gistRes = await fetch('https://api.github.com/gists', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Agent': 'SmartStudy-App/1.0',
+        'User-Agent': 'SmartStudy-App/1.0',
+        Accept: 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        description: description || `Smart Study Vault: ${studyPlan?.profile?.subject || 'Exam Mastery'} (${new Date().toLocaleDateString()})`,
+        public: Boolean(isPublic),
+        files,
+      }),
+    });
+
+    if (!gistRes.ok) {
+      const errData: any = await gistRes.json();
+      throw new Error(errData.message || 'Failed to create Gist on GitHub');
+    }
+
+    const gistData: any = await gistRes.json();
+
+    return res.json({
+      success: true,
+      gistUrl: gistData.html_url,
+      gistId: gistData.id,
+      filesCount: Object.keys(files).length,
+    });
+  } catch (err: any) {
+    console.error('Error exporting to GitHub Gist:', err);
+    return res.status(500).json({ error: err?.message || 'Failed to export to GitHub Gist' });
+  }
+});
+
+// 6. Commit Daily Study Streak to a GitHub Repository
+app.post('/api/github/commit-streak', async (req: Request, res: Response) => {
+  const {
+    token,
+    repoName = 'smart-study-streak',
+    streakDays = 1,
+    minutesSpent = 60,
+    questionsAnswered = 10,
+    subject = 'General Studies',
+    notes,
+  } = req.body;
+
+  if (!token) {
+    return res.status(401).json({ error: 'GitHub token required to record commit streak.' });
+  }
+
+  try {
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      'User-Agent': 'SmartStudy-App/1.0',
+      Accept: 'application/vnd.github.v3+json',
+      'Content-Type': 'application/json',
+    };
+
+    // 1. Get authenticated user
+    const userRes = await fetch('https://api.github.com/user', { headers });
+    if (!userRes.ok) throw new Error('Invalid GitHub token');
+    const user: any = await userRes.json();
+    const owner = user.login;
+
+    // 2. Check if repository exists, if not create it
+    const repoCheckRes = await fetch(`https://api.github.com/repos/${owner}/${repoName}`, { headers });
+    if (!repoCheckRes.ok && repoCheckRes.status === 404) {
+      const createRepoRes = await fetch('https://api.github.com/user/repos', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          name: repoName,
+          description: '🧠 Active Daily Study Streak Tracker: commits recorded automatically by Smart Study',
+          private: false,
+          auto_init: true,
+        }),
+      });
+      if (!createRepoRes.ok) {
+        throw new Error('Failed to create target study repository on GitHub');
+      }
+      // Wait brief moment for repo initialization
+      await new Promise(r => setTimeout(r, 1200));
+    }
+
+    // 3. Read existing study-log.md to get SHA and append
+    const filePath = 'study-log.md';
+    let fileSha: string | undefined;
+    let existingContent = '# 🧠 Smart Study Streak Log\n\nDaily automated active recall commits.\n\n| Date | Streak | Subject | Minutes | Questions | Notes |\n| :--- | :---: | :--- | :---: | :---: | :--- |\n';
+
+    const fileCheckRes = await fetch(`https://api.github.com/repos/${owner}/${repoName}/contents/${filePath}`, { headers });
+    if (fileCheckRes.ok) {
+      const fileData: any = await fileCheckRes.json();
+      fileSha = fileData.sha;
+      if (fileData.content) {
+        existingContent = Buffer.from(fileData.content, 'base64').toString('utf-8');
+      }
+    }
+
+    // 4. Append today's log line
+    const todayStr = new Date().toISOString().split('T')[0];
+    const newEntry = `| ${todayStr} | 🔥 ${streakDays}d | ${subject} | ${minutesSpent}m | ${questionsAnswered} | ${notes || 'Active recall & pretest session'} |\n`;
+    const updatedContent = existingContent.includes(`| ${todayStr} |`)
+      ? existingContent // Don't duplicate today's row if already committed
+      : existingContent + newEntry;
+
+    // 5. Commit updated file
+    const commitMessage = `🔥 Study Streak Day ${streakDays}: ${minutesSpent}m on ${subject} [Smart Study]`;
+    const commitRes = await fetch(`https://api.github.com/repos/${owner}/${repoName}/contents/${filePath}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({
+        message: commitMessage,
+        content: Buffer.from(updatedContent).toString('base64'),
+        sha: fileSha,
+      }),
+    });
+
+    if (!commitRes.ok) {
+      const errData: any = await commitRes.json();
+      throw new Error(errData.message || 'Failed to commit streak to repository');
+    }
+
+    const commitData: any = await commitRes.json();
+
+    return res.json({
+      success: true,
+      commitUrl: commitData.commit?.html_url || `https://github.com/${owner}/${repoName}`,
+      repoUrl: `https://github.com/${owner}/${repoName}`,
+      streakDays,
+    });
+  } catch (err: any) {
+    console.error('Error committing streak to GitHub:', err);
+    return res.status(500).json({ error: err?.message || 'Failed to record streak commit on GitHub' });
   }
 });
 
@@ -3110,12 +3784,93 @@ app.get('/api/leaderboard', (req: Request, res: Response) => {
   });
 });
 
+// Official Daily Quotes API endpoint (Microsoft Bing Daily Quote Style)
+app.get('/api/daily-quote', async (req: Request, res: Response) => {
+  try {
+    const { OFFICIAL_DAILY_QUOTES, getOfficialQuoteForDate } = await import('./src/data/officialDailyQuotes.js').catch(async () => {
+      return await import('./src/data/officialDailyQuotes.ts');
+    });
+
+    const category = req.query.category as string;
+    const isRandom = req.query.random === 'true';
+    const indexParam = req.query.index ? parseInt(req.query.index as string, 10) : NaN;
+
+    let selectedQuote;
+    let quotesPool = OFFICIAL_DAILY_QUOTES;
+
+    if (category && category !== 'All') {
+      const filtered = OFFICIAL_DAILY_QUOTES.filter(q => 
+        q.category.toLowerCase().includes(category.toLowerCase())
+      );
+      if (filtered.length > 0) quotesPool = filtered;
+    }
+
+    if (!isNaN(indexParam) && indexParam >= 0) {
+      selectedQuote = quotesPool[indexParam % quotesPool.length];
+    } else if (isRandom) {
+      const randomIndex = Math.floor(Math.random() * quotesPool.length);
+      selectedQuote = quotesPool[randomIndex];
+    } else {
+      const requestedDate = req.query.date ? new Date(req.query.date as string) : new Date();
+      selectedQuote = getOfficialQuoteForDate(requestedDate);
+      if (category && category !== 'All' && !selectedQuote.category.toLowerCase().includes(category.toLowerCase())) {
+        selectedQuote = quotesPool[0];
+      }
+    }
+
+    const todayDateString = new Intl.DateTimeFormat('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+    }).format(new Date());
+
+    return res.json({
+      success: true,
+      provider: 'Daily Quotes & Wisdom Archive',
+      curation: 'Official Daily Selection · Curated for Academic Excellence & Intellectual Stamina',
+      date: todayDateString,
+      quote: selectedQuote,
+      totalAvailable: OFFICIAL_DAILY_QUOTES.length,
+    });
+  } catch (err: any) {
+    console.error('Error in /api/daily-quote:', err);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve daily quote',
+    });
+  }
+});
+
+// Download 1-File Website (Self-contained standalone HTML bundle)
+app.get('/api/download-single-file', (_req: Request, res: Response) => {
+  const rootSingleFilePath = path.resolve(__dirname, 'single-file-website.html');
+  const distSingleFilePath = path.resolve(__dirname, 'dist', 'smart-study-singlefile.html');
+  const distIndexPath = path.resolve(__dirname, 'dist', 'index.html');
+
+  let targetPath = null;
+  if (fs.existsSync(rootSingleFilePath)) targetPath = rootSingleFilePath;
+  else if (fs.existsSync(distSingleFilePath)) targetPath = distSingleFilePath;
+  else if (fs.existsSync(distIndexPath)) targetPath = distIndexPath;
+
+  if (targetPath) {
+    res.setHeader('Content-Disposition', 'attachment; filename="smart-study-single-file.html"');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.sendFile(targetPath);
+  }
+
+  return res.status(404).send('Single-file build not found. Run npm run build first.');
+});
+
 // Vite server setup in development or static hosting in production
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -3126,8 +3881,8 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, () => {
-    console.log(`Server listening on port ${PORT}`);
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server listening on 0.0.0.0:${PORT}`);
   });
 }
 

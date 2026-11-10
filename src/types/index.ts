@@ -184,6 +184,31 @@ export interface UserStudyState {
   mistakesLog?: MistakeRecord[];
   userProfile?: UserProfileCustomization;
   achievements?: Record<string, ClaimedAchievementRecord>;
+  githubConnection?: GitHubConnectionState;
+}
+
+export interface GitHubUser {
+  id: number;
+  login: string;
+  name: string | null;
+  avatar_url: string;
+  html_url: string;
+  bio: string | null;
+  public_repos: number;
+  total_private_repos?: number;
+  company?: string | null;
+  location?: string | null;
+}
+
+export interface GitHubConnectionState {
+  isConnected: boolean;
+  user: GitHubUser | null;
+  token?: string;
+  connectedAt?: string;
+  lastSyncGistUrl?: string;
+  lastCommitDate?: string;
+  autoSyncStreak?: boolean;
+  syncRepo?: string;
 }
 
 export interface Flashcard {

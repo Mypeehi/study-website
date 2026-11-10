@@ -242,6 +242,35 @@ export function speakExaminerVoice(text: string, onEnd?: () => void) {
   window.speechSynthesis.speak(utterance);
 }
 
+// Text-to-Speech playback for Official Daily Quotes (Bing Style)
+export function speakDailyQuote(text: string, onEnd?: () => void) {
+  if (typeof window === 'undefined' || !window.speechSynthesis) return;
+
+  window.speechSynthesis.cancel();
+
+  const cleanText = text.replace(/[*_#`[\]()]/g, ' ').replace(/\s+/g, ' ').trim();
+  const utterance = new SpeechSynthesisUtterance(cleanText);
+
+  const voices = window.speechSynthesis.getVoices();
+  const preferredVoice = voices.find(v => 
+    v.lang.includes('en-US') || v.lang.includes('en-GB') || v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Samantha')
+  ) || voices.find(v => v.lang.startsWith('en'));
+
+  if (preferredVoice) {
+    utterance.voice = preferredVoice;
+  }
+
+  utterance.pitch = 1.0;
+  utterance.rate = 0.98; // Measured, thoughtful recitation pace
+
+  if (onEnd) {
+    utterance.onend = onEnd;
+    utterance.onerror = onEnd;
+  }
+
+  window.speechSynthesis.speak(utterance);
+}
+
 // Sequenced speech: Speaks side talk first, triggers onSideTalkEnd to reveal question, then speaks question
 export function speakSideTalkThenQuestion(
   sideTalk: string,

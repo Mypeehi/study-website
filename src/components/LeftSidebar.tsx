@@ -25,6 +25,8 @@ import {
   CheckCircle2,
   Award,
   Wand2,
+  Github,
+  FileDown,
 } from 'lucide-react';
 import { isSoundEnabled, setSoundEnabled, playStreakFlameSound, playIncorrectSound, playCorrectSound } from '../utils/audio';
 import { ExamPlan, UserProfileCustomization, DailyStudyGoal } from '../types';
@@ -33,8 +35,8 @@ import { StickFigureAvatar } from './StickFigureAvatar';
 import { HandDrawnSmileyIcon } from './HandDrawnSmileyIcon';
 
 interface LeftSidebarProps {
-  activeTab: 'plan' | 'session' | 'lectures' | 'quiz' | 'examiner' | 'cards' | 'streak' | 'level-drill' | 'mistakes' | 'leaderboard' | 'achievements' | 'creator';
-  setActiveTab: (tab: 'plan' | 'session' | 'lectures' | 'quiz' | 'examiner' | 'cards' | 'streak' | 'level-drill' | 'mistakes' | 'leaderboard' | 'achievements' | 'creator') => void;
+  activeTab: 'plan' | 'session' | 'lectures' | 'quiz' | 'examiner' | 'cards' | 'streak' | 'level-drill' | 'mistakes' | 'leaderboard' | 'achievements' | 'creator' | 'github';
+  setActiveTab: (tab: 'plan' | 'session' | 'lectures' | 'quiz' | 'examiner' | 'cards' | 'streak' | 'level-drill' | 'mistakes' | 'leaderboard' | 'achievements' | 'creator' | 'github') => void;
   streak: number;
   freezeTokens: number;
   totalXp: number;
@@ -216,6 +218,15 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
       color: 'text-amber-400',
       activeColor: 'bg-amber-500/15 border-amber-500/40 text-amber-300 font-bold',
       badge: 'Global',
+    },
+    {
+      id: 'github' as const,
+      label: 'GitHub Study Hub',
+      shortLabel: 'GitHub',
+      icon: Github,
+      color: 'text-cyan-400',
+      activeColor: 'bg-cyan-500/15 border-cyan-500/40 text-cyan-300 font-bold',
+      badge: 'Git Sync',
     },
   ];
 
@@ -513,10 +524,20 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
                     )}
                   </button>
 
+                  <a
+                    href="/api/download-single-file"
+                    download="smart-study-single-file.html"
+                    title="Download entire website as 1 self-contained HTML file"
+                    className="flex items-center justify-center gap-1 py-2 px-2.5 rounded-xl bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-cyan-500/40 text-cyan-300 text-xs font-semibold transition-colors cursor-pointer"
+                  >
+                    <FileDown className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>1-File</span>
+                  </a>
+
                   {onResetProgress && (
                     <button
                       onClick={() => setShowResetModal(true)}
-                      className="flex items-center gap-1 py-2 px-3 rounded-xl bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/40 text-rose-300 hover:text-rose-200 text-xs font-semibold transition-colors cursor-pointer"
+                      className="flex items-center gap-1 py-2 px-2.5 rounded-xl bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/40 text-rose-300 hover:text-rose-200 text-xs font-semibold transition-colors cursor-pointer"
                       title="Restart student's entire progress on the app"
                     >
                       <RotateCcw className="w-3 h-3 text-rose-400" />
@@ -855,6 +876,16 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
                   {soundOn ? <Volume2 className="w-3.5 h-3.5 text-amber-400" /> : <VolumeX className="w-3.5 h-3.5" />}
                   <span>{soundOn ? 'Sound On' : 'Muted'}</span>
                 </button>
+
+                <a
+                  href="/api/download-single-file"
+                  download="smart-study-single-file.html"
+                  title="Download entire website as 1 self-contained HTML file"
+                  className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-slate-900 hover:bg-slate-850 border border-slate-800 text-cyan-300 text-xs font-semibold cursor-pointer"
+                >
+                  <FileDown className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>1-File HTML</span>
+                </a>
 
                 {onResetProgress && (
                   <button
