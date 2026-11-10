@@ -18,6 +18,7 @@ import { LeaderboardPage } from './components/LeaderboardPage';
 import { Achievements } from './components/Achievements';
 import { QuestionCreatorStudio } from './components/QuestionCreatorStudio';
 import { GitHubIntegrationPage } from './components/GitHubIntegrationPage';
+import { generatePlanQuestions, generateLocalPlanQuestions } from './utils/planQuestionsGenerator';
 import { AchievementToastOverlay, AchievementToastItem } from './components/AchievementToastOverlay';
 import { evaluateAchievements, claimAchievementReward } from './utils/achievements';
 import { INITIAL_LECTURES, INITIAL_FLASHCARDS } from './data/lectures';
@@ -553,14 +554,38 @@ export default function App() {
         ) : (
           <ActiveStudySimulator
             currentPlan={studyState.activeExamPlan}
-            onNavigateToQuiz={(subjectName) => {
-              if (subjectName) {
-                setQuizTopicTitle(`${subjectName} Cold Pretest Drill`);
-              }
+            onNavigateToQuiz={async (subjectName, phase = 'pretest') => {
+              const targetSubject = subjectName || studyState.activeExamPlan?.profile?.subject || 'STEM & Academic Mastery';
+              const title = phase === 'pretest'
+                ? `${targetSubject} Cold Pretest Drill`
+                : `${targetSubject} Deliberate Practice Drill`;
+              setQuizTopicTitle(title);
+
+              // Always generate questions tailored directly to the student's active exam plan
+              const questions = await generatePlanQuestions(
+                studyState.activeExamPlan,
+                phase,
+                5,
+                targetSubject
+              );
+              setActiveQuizQuestions(questions);
               setActiveTab('quiz');
             }}
             onNavigateToMistakes={() => setActiveTab('mistakes')}
-            onNavigateToPractice={() => setActiveTab('level-drill')}
+            onNavigateToPractice={async (subjectName) => {
+              const targetSubject = subjectName || studyState.activeExamPlan?.profile?.subject || 'STEM & Academic Mastery';
+              setQuizTopicTitle(`${targetSubject} Deliberate Practice Drill`);
+
+              // Always generate questions tailored directly to the student's active exam plan
+              const questions = await generatePlanQuestions(
+                studyState.activeExamPlan,
+                'practice',
+                5,
+                targetSubject
+              );
+              setActiveQuizQuestions(questions);
+              setActiveTab('quiz');
+            }}
             onNavigateToRoadmap={() => setActiveTab('level-drill')}
             onLaunchInterview={() => {
               setStudyState(prev => ({ ...prev, activeExamPlan: null }));
@@ -597,8 +622,20 @@ export default function App() {
 
         {activeTab === 'quiz' && (
           <DailyQuizDrill
-            questions={activeQuizQuestions.length > 0 ? activeQuizQuestions : getDailyMixedQuestions()}
-            topicTitle={activeQuizQuestions.length > 0 ? quizTopicTitle : (studyState.activeExamPlan?.profile?.subject ? `${studyState.activeExamPlan.profile.subject} Daily Practice Challenge` : 'Daily High-Yield Practice Challenge')}
+            questions={
+              activeQuizQuestions.length > 0
+                ? activeQuizQuestions
+                : (studyState.activeExamPlan
+                    ? generateLocalPlanQuestions(studyState.activeExamPlan, 'pretest', 5)
+                    : getDailyMixedQuestions())
+            }
+            topicTitle={
+              activeQuizQuestions.length > 0
+                ? quizTopicTitle
+                : (studyState.activeExamPlan?.profile?.subject
+                    ? `${studyState.activeExamPlan.profile.subject} Daily Practice Challenge`
+                    : 'Daily High-Yield Practice Challenge')
+            }
             subject={studyState.activeExamPlan?.profile?.subject}
             passageLengthPreference={studyState.activeExamPlan?.profile?.passageLengthPreference}
             questionTypes={studyState.activeExamPlan?.profile?.questionTypes}
@@ -669,8 +706,13 @@ export default function App() {
             onSelectTopicForQuiz={handleSelectTopicForQuiz}
             onNavigate={tab => {
               if (tab === 'quiz') {
-                setActiveQuizQuestions(getDailyMixedQuestions());
-                setQuizTopicTitle('Daily High-Yield Practice Challenge');
+                if (studyState.activeExamPlan) {
+                  setActiveQuizQuestions(generateLocalPlanQuestions(studyState.activeExamPlan, 'pretest', 5));
+                  setQuizTopicTitle(`${studyState.activeExamPlan.profile.subject} Practice Challenge`);
+                } else {
+                  setActiveQuizQuestions(getDailyMixedQuestions());
+                  setQuizTopicTitle('Daily High-Yield Practice Challenge');
+                }
               }
               setActiveTab(tab);
             }}
@@ -683,8 +725,13 @@ export default function App() {
           <LeaderboardPage
             studyState={studyState}
             onNavigateToDrill={() => {
-              setActiveQuizQuestions(getDailyMixedQuestions());
-              setQuizTopicTitle('Daily High-Yield Practice Challenge');
+              if (studyState.activeExamPlan) {
+                setActiveQuizQuestions(generateLocalPlanQuestions(studyState.activeExamPlan, 'pretest', 5));
+                setQuizTopicTitle(`${studyState.activeExamPlan.profile.subject} Practice Challenge`);
+              } else {
+                setActiveQuizQuestions(getDailyMixedQuestions());
+                setQuizTopicTitle('Daily High-Yield Practice Challenge');
+              }
               setActiveTab('quiz');
             }}
             onNavigateToExamPlan={() => setActiveTab('plan')}
@@ -701,8 +748,13 @@ export default function App() {
               onTriggerToast={handleTriggerAchievementToast}
               onNavigateToSection={(section) => {
                 if (section === 'quiz') {
-                  setActiveQuizQuestions(getDailyMixedQuestions());
-                  setQuizTopicTitle('Daily High-Yield Practice Challenge');
+                  if (studyState.activeExamPlan) {
+                    setActiveQuizQuestions(generateLocalPlanQuestions(studyState.activeExamPlan, 'pretest', 5));
+                    setQuizTopicTitle(`${studyState.activeExamPlan.profile.subject} Practice Challenge`);
+                  } else {
+                    setActiveQuizQuestions(getDailyMixedQuestions());
+                    setQuizTopicTitle('Daily High-Yield Practice Challenge');
+                  }
                 }
                 setActiveTab(section as any);
               }}

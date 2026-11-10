@@ -30,9 +30,9 @@ import {
 } from '../utils/audio';
 import { ExamPlan } from '../types';
 
-export type StudySubject = 'Math' | 'World Languages' | 'English' | 'Social Studies' | 'Science' | 'Physics';
+export type StudySubject = 'Math' | 'World Languages' | 'English' | 'Social Studies' | 'Science' | 'Physics' | string;
 
-export const LAZY_STUDYING_DESCRIPTIONS: Record<StudySubject, string> = {
+export const LAZY_STUDYING_DESCRIPTIONS: Record<string, string> = {
   Math: 'Playing strategy games, estimating grocery bills, or mentally calculating percentages during sales.',
   'World Languages': "Passively listening to a podcast in your target language, watching anime with subtitles, or changing your phone's language setting.",
   English: 'Listening to audiobooks, reading Reddit threads analyzing movie plots, or watching video essays on YouTube.',
@@ -41,7 +41,7 @@ export const LAZY_STUDYING_DESCRIPTIONS: Record<StudySubject, string> = {
   Physics: 'Watching a sci-fi movie and laughing at the bad physics, playing Kerbal Space Program, or watching slow-mo sports replays.',
 };
 
-export const SUBJECT_TOPIC_PRESETS: Record<StudySubject, string[]> = {
+export const SUBJECT_TOPIC_PRESETS: Record<string, string[]> = {
   Math: [
     'Calculus: Derivatives & Chain Rule',
     'Algebra: Quadratic Vertex Form & Factoring',
@@ -82,9 +82,9 @@ export const SUBJECT_TOPIC_PRESETS: Record<StudySubject, string[]> = {
 
 interface ActiveStudySimulatorProps {
   currentPlan?: ExamPlan | null;
-  onNavigateToQuiz?: (subject?: string) => void;
+  onNavigateToQuiz?: (subject?: string, phase?: 'pretest' | 'practice') => void;
   onNavigateToMistakes?: () => void;
-  onNavigateToPractice?: () => void;
+  onNavigateToPractice?: (subject?: string) => void;
   onNavigateToRoadmap?: () => void;
   onLaunchInterview?: () => void;
   onResetProgress?: () => void;
@@ -109,27 +109,32 @@ export const ActiveStudySimulator: React.FC<ActiveStudySimulatorProps> = ({
 }) => {
   // Study configuration state
   const [totalMinutes, setTotalMinutes] = useState<number>(60);
-  const [selectedSubject, setSelectedSubject] = useState<StudySubject>(() => {
+  const [selectedSubject, setSelectedSubject] = useState<string>(() => {
     if (currentPlan?.profile?.subject) {
-      const match = (['Math', 'World Languages', 'English', 'Social Studies', 'Science', 'Physics'] as StudySubject[]).find(
-        s => s.toLowerCase() === currentPlan.profile.subject.toLowerCase()
-      );
-      if (match) return match;
+      return currentPlan.profile.subject;
     }
     return 'Math';
   });
-  const [customGoal, setCustomGoal] = useState<string>('Master standard application and eliminate 2 logic traps');
+  const [customGoal, setCustomGoal] = useState<string>(() => {
+    if (currentPlan?.milestones?.[0]?.focus) {
+      return `Master ${currentPlan.milestones[0].focus} & eliminate logic traps`;
+    }
+    return 'Master standard application and eliminate 2 logic traps';
+  });
   const [isEditingGoal, setIsEditingGoal] = useState<boolean>(false);
   const [soundOn, setSoundOn] = useState<boolean>(isSoundEnabled());
 
   useEffect(() => {
     if (currentPlan?.profile?.subject) {
-      const match = (['Math', 'World Languages', 'English', 'Social Studies', 'Science', 'Physics'] as StudySubject[]).find(
-        s => s.toLowerCase() === currentPlan.profile.subject.toLowerCase()
-      );
-      if (match) setSelectedSubject(match);
+      setSelectedSubject(currentPlan.profile.subject);
     }
   }, [currentPlan?.profile?.subject]);
+
+  useEffect(() => {
+    if (currentPlan?.milestones?.[0]?.focus) {
+      setCustomGoal(`Master ${currentPlan.milestones[0].focus} & eliminate logic traps`);
+    }
+  }, [currentPlan?.milestones]);
 
   // Interactive Live Session Runner State
   const [isSessionActive, setIsSessionActive] = useState<boolean>(false);
@@ -180,9 +185,11 @@ export const ActiveStudySimulator: React.FC<ActiveStudySimulatorProps> = ({
       badgeBg: 'bg-purple-500/20 text-purple-300 border-purple-500/30',
       borderTop: 'border-purple-500',
       icon: HelpCircle,
-      tagline: 'Attempt hard questions cold. Create cognitive gaps so your brain absorbs info better later.',
-      actionLabel: 'Launch Pretest Drill',
-      actionHandler: () => onNavigateToQuiz?.(selectedSubject),
+      tagline: currentPlan?.profile?.subject
+        ? `Attempt hard ${currentPlan.profile.subject} questions cold. Create neural gaps so your brain encodes solutions deeper.`
+        : 'Attempt hard questions cold. Create cognitive gaps so your brain absorbs info better later.',
+      actionLabel: currentPlan ? `Launch Plan Pretest (${currentPlan.profile.subject})` : 'Launch Pretest Drill',
+      actionHandler: () => onNavigateToQuiz?.(currentPlan ? currentPlan.profile.subject : selectedSubject, 'pretest'),
     },
     {
       step: 3,
@@ -222,9 +229,13 @@ export const ActiveStudySimulator: React.FC<ActiveStudySimulatorProps> = ({
       badgeBg: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
       borderTop: 'border-emerald-500',
       icon: Dumbbell,
-      tagline: 'Apply your newly fixed knowledge on fresh problems until the pattern is cemented.',
-      actionLabel: 'Launch Practice Drill',
-      actionHandler: () => onNavigateToPractice ? onNavigateToPractice() : onNavigateToQuiz?.(selectedSubject),
+      tagline: currentPlan?.profile?.subject
+        ? `Apply newly fixed ${currentPlan.profile.subject} concepts on fresh targeted problems until automatic.`
+        : 'Apply your newly fixed knowledge on fresh problems until the pattern is cemented.',
+      actionLabel: currentPlan ? `Practice Plan Problems (${currentPlan.profile.subject})` : 'Launch Practice Drill',
+      actionHandler: () => onNavigateToPractice
+        ? onNavigateToPractice(currentPlan ? currentPlan.profile.subject : selectedSubject)
+        : onNavigateToQuiz?.(currentPlan ? currentPlan.profile.subject : selectedSubject, 'practice'),
     },
   ];
 
@@ -448,6 +459,37 @@ export const ActiveStudySimulator: React.FC<ActiveStudySimulatorProps> = ({
           </div>
         )}
 
+        {/* Active Study Plan Synchronized Banner */}
+        {currentPlan && (
+          <div className="mb-6 bg-gradient-to-r from-indigo-950/70 via-purple-950/50 to-slate-900 border border-indigo-500/40 rounded-2xl p-4 shadow-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
+                <Sparkles className="w-5 h-5 text-indigo-300" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-300 bg-indigo-500/20 px-2 py-0.5 rounded border border-indigo-500/30">
+                    Active Study Plan Synchronized
+                  </span>
+                  <span className="text-xs text-slate-300 font-medium">
+                    {currentPlan.profile.subject}
+                  </span>
+                </div>
+                <p className="text-sm text-slate-200 mt-1">
+                  Questions in <strong className="text-purple-300">Step 2 (Pretest)</strong> and <strong className="text-emerald-300">Step 5 (Deliberate Practice)</strong> are automatically generated from your active <span className="text-white font-semibold">{currentPlan.profile.subject}</span> syllabus.
+                </p>
+              </div>
+            </div>
+            {currentPlan.milestones?.[0] && (
+              <div className="shrink-0 text-left sm:text-right text-xs bg-slate-900/80 px-3.5 py-2 rounded-xl border border-indigo-500/30 shadow-inner">
+                <span className="text-slate-400 block text-[10px] uppercase font-mono tracking-wider">Milestone Target</span>
+                <span className="font-semibold text-white">{currentPlan.milestones[0].focus}</span>
+                <span className="block text-[11px] text-emerald-400 font-mono mt-0.5">{currentPlan.milestones[0].phase} · Days {currentPlan.milestones[0].dayRange}</span>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Controls Section: Time Slider & Subject Dropdown */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-6">
           {/* Time Slider */}
@@ -478,16 +520,28 @@ export const ActiveStudySimulator: React.FC<ActiveStudySimulatorProps> = ({
 
           {/* Subject Dropdown */}
           <div className="space-y-4">
-            <label htmlFor="subjectSelect" className="block text-sm font-semibold text-slate-300 tracking-wide uppercase mb-1">
-              Subject
-            </label>
+            <div className="flex items-center justify-between">
+              <label htmlFor="subjectSelect" className="block text-sm font-semibold text-slate-300 tracking-wide uppercase">
+                Subject
+              </label>
+              {currentPlan?.profile?.subject && selectedSubject === currentPlan.profile.subject && (
+                <span className="text-[11px] text-indigo-400 font-medium bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20">
+                  Plan Synced
+                </span>
+              )}
+            </div>
             <div className="relative">
               <select
                 id="subjectSelect"
                 value={selectedSubject}
-                onChange={(e) => setSelectedSubject(e.target.value as StudySubject)}
+                onChange={(e) => setSelectedSubject(e.target.value)}
                 className="w-full appearance-none bg-slate-800 border border-slate-600 text-white py-3 px-4 pr-8 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all cursor-pointer font-medium"
               >
+                {currentPlan?.profile?.subject && (
+                  <option value={currentPlan.profile.subject}>
+                    🎯 {currentPlan.profile.subject} (From Active Plan)
+                  </option>
+                )}
                 <option value="Math">Math</option>
                 <option value="World Languages">World Languages</option>
                 <option value="English">English</option>
@@ -517,7 +571,8 @@ export const ActiveStudySimulator: React.FC<ActiveStudySimulatorProps> = ({
               <span className="text-[11px] font-normal text-blue-400/80 lowercase">({selectedSubject.toLowerCase()})</span>
             </h4>
             <p id="lazyStudyingText" className="text-slate-300 text-sm leading-relaxed">
-              {LAZY_STUDYING_DESCRIPTIONS[selectedSubject]}
+              {LAZY_STUDYING_DESCRIPTIONS[selectedSubject] ||
+                `Passively reviewing high-yield concept maps, past paper trap breakdowns, or formula cheat sheets for ${selectedSubject}.`}
             </p>
           </div>
         </div>
@@ -624,11 +679,11 @@ export const ActiveStudySimulator: React.FC<ActiveStudySimulatorProps> = ({
             </p>
             <div className="mt-auto pt-2 border-t border-slate-700/50">
               <button
-                onClick={() => onNavigateToQuiz?.(selectedSubject)}
+                onClick={() => onNavigateToQuiz?.(currentPlan ? currentPlan.profile.subject : selectedSubject, 'pretest')}
                 className="w-full py-1.5 px-2 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 text-xs font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer"
               >
                 <HelpCircle className="w-3.5 h-3.5" />
-                <span>Start Cold Test</span>
+                <span>{currentPlan ? `Start Plan Pretest` : 'Start Cold Test'}</span>
               </button>
             </div>
           </div>
@@ -690,11 +745,13 @@ export const ActiveStudySimulator: React.FC<ActiveStudySimulatorProps> = ({
             </p>
             <div className="mt-auto pt-2 border-t border-slate-700/50">
               <button
-                onClick={() => onNavigateToPractice ? onNavigateToPractice() : onNavigateToQuiz?.(selectedSubject)}
+                onClick={() => onNavigateToPractice
+                  ? onNavigateToPractice(currentPlan ? currentPlan.profile.subject : selectedSubject)
+                  : onNavigateToQuiz?.(currentPlan ? currentPlan.profile.subject : selectedSubject, 'practice')}
                 className="w-full py-1.5 px-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-xs font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer"
               >
                 <Dumbbell className="w-3.5 h-3.5" />
-                <span>Cement Pattern</span>
+                <span>{currentPlan ? `Practice Plan Problems` : 'Cement Pattern'}</span>
               </button>
             </div>
           </div>
